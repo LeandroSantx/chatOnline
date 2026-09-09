@@ -1,118 +1,108 @@
-import { useEffect, useRef, useState } from 'react';
-import { io } from 'socket.io-client';
+import { useEffect, useState } from 'react'
+import { io } from 'socket.io-client'
 
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
+const SOCKET_URL = 'http://localhost:3001'
 
-export const useSocket = () => {
-  const socketRef = useRef(null);
-  const [isConnected, setIsConnected] = useState(false);
-  const [messages, setMessages] = useState([]);
-  const [users, setUsers] = useState([]);
-  const [typingUsers, setTypingUsers] = useState(new Set());
-  const [error, setError] = useState(null);
-  const [currentRoom, setCurrentRoom] = useState('Geral');
+export const socket = io(SOCKET_URL, {
+  transports: ['websocket', 'polling'],
+  autoConnect: true
+})
+
+export function useSocket(currentRoom, username, userId) {
+  const [messages, setMessages] = useState([])
+  const [onlineUsers, setOnlineUsers] = useState([])
+  const [typingUsers, setTypingUsers] = useState([])
 
   useEffect(() => {
-    socketRef.current = io(SOCKET_URL, {
-      autoConnect: true,
-      transports: ['websocket']
-    });
+    if (!username || !userId) return
 
-    const socket = socketRef.current;
+    function onConnect() {
+      socket.emit('user:join', { username, userId, room: currentRoom })
+    }
 
-    socket.on('connect', () => setIsConnected(true));
-    socket.on('disconnect', () => setIsConnected(false));
-    
-    socket.on('message:history', (history) => setMessages(history));
-    
+    if (socket.connected) {
+      onConnect()
+    } else {
+      socket.connect()
+    }
+
+    socket.on('connect', onConnect)
+
+    socket.on('message:history', (history) => {
+      setMessages(history)
+    })
+
     socket.on('message:receive', (msg) => {
-      setMessages((prev) => [...prev, msg]);
-    });
+      setMessages((prev) => [...prev, msg])
+    })
 
-    // Atualiza mensagem editada na lista
     socket.on('message:updated', (updatedMsg) => {
-      setMessages((prev) =>
-        prev.map((msg) => (msg.id === updatedMsg.id ? updatedMsg : msg))
-      );
-    });
+      setMessages((prev) => prev.map((m) => (m.id === updatedMsg.id ? updatedMsg : m)))
+    })
 
-    // Remove mensagem excluída da lista
     socket.on('message:deleted', ({ messageId }) => {
-      setMessages((prev) => prev.filter((msg) => msg.id !== messageId));
-    });
+      setMessages((prev) => prev.filter((m) => m.id !== messageId))
+    })
 
-    socket.on('users:update', (updatedUsers) => setUsers(updatedUsers));
+    socket.on('users:update', (users) => {
+      setOnlineUsers(users)
+    })
 
-    socket.on('typing:update', ({ username, isTyping }) => {
+    socket.on('typing:update', ({ username: typingUser, isTyping }) => {
       setTypingUsers((prev) => {
-        const next = new Set(prev);
-        if (isTyping) next.add(username);
-        else next.delete(username);
-        return next;
-      });
-    });
-
-    socket.on('error', (err) => {
-      setError(err.message);
-      setTimeout(() => setError(null), 4000);
-    });
+        if (isTyping) {
+          return prev.includes(typingUser) ? prev : [...prev, typingUser]
+        } else {
+          return prev.filter((u) => u !== typingUser)
+        }
+      })
+    })
 
     return () => {
-      socket.disconnect();
-    };
-  }, []);
-
-  const joinChat = (username, callback) => {
-    if (socketRef.current) {
-      socketRef.current.emit('user:join', { username, room: currentRoom }, callback);
+      socket.off('connect', onConnect)
+      socket.off('message:history')
+      socket.off('message:receive')
+      socket.off('message:updated')
+      socket.off('message:deleted')
+      socket.off('users:update')
+      socket.off('typing:update')
     }
-  };
+  }, [username, userId])
 
-  const switchRoom = (newRoom) => {
-    if (socketRef.current && isConnected && newRoom.trim()) {
-      socketRef.current.emit('room:join', { room: newRoom });
-      setCurrentRoom(newRoom);
-      setMessages([]);
+  // Troca de sala
+  useEffect(() => {
+    if (socket.connected && currentRoom) {
+      socket.emit('room:join', { room: currentRoom })
     }
-  };
+  }, [currentRoom])
 
   const sendMessage = (text, replyTo = null) => {
-    if (socketRef.current && isConnected) {
-      socketRef.current.emit('message:send', { text, room: currentRoom, replyTo });
-    }
-  };
+    socket.emit('message:send', { text, room: currentRoom, replyTo, userId })
+  }
 
-  const editMessage = (messageId, newText) => {
-    if (socketRef.current && isConnected) {
-      socketRef.current.emit('message:edit', { messageId, newText });
+  const sendTyping = (isTyping) => {
+    if (isTyping) {
+      socket.emit('typing:start', { room: currentRoom })
+    } else {
+      socket.emit('typing:stop', { room: currentRoom })
     }
-  };
+  }
 
-  const deleteMessage = (messageId) => {
-    if (socketRef.current && isConnected) {
-      socketRef.current.emit('message:delete', { messageId });
-    }
-  };
+  const handleEdit = (messageId, newText) => {
+    socket.emit('message:edit', { messageId, newText })
+  }
 
-  const setTyping = (isTyping) => {
-    if (socketRef.current && isConnected) {
-      socketRef.current.emit(isTyping ? 'typing:start' : 'typing:stop', { room: currentRoom });
-    }
-  };
+  const handleDelete = (messageId) => {
+    socket.emit('message:delete', { messageId })
+  }
 
   return {
-    socketId: socketRef.current?.id,
-    isConnected,
     messages,
-    users,
-    typingUsers: Array.from(typingUsers),
-    error,
-    currentRoom,
-    joinChat,
-    switchRoom,
+    onlineUsers,
+    typingUsers,
     sendMessage,
-    editMessage,
-    deleteMessage,
-    setTyping
-  };
-};
+    sendTyping,
+    handleEdit,
+    handleDelete
+  }
+}

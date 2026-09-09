@@ -20,10 +20,10 @@ const isRateLimited = (socketId) => {
 export const registerChatHandlers = (io, socket) => {
   const defaultRoom = 'Geral';
 
-  // 1. Entrada Inicial do Usuário
-  socket.on('user:join', ({ username, room }, callback) => {
+  // 1. Entrada Inicial do Usuário (recebe userId do Supabase)
+  socket.on('user:join', ({ username, userId, room }, callback) => {
     const targetRoom = room || defaultRoom;
-    const { user, error } = chatService.addUser(socket.id, username, targetRoom);
+    const { user, error } = chatService.addUser(socket.id, username, targetRoom, userId);
 
     if (error) {
       return callback && callback({ success: false, error });
@@ -78,8 +78,8 @@ export const registerChatHandlers = (io, socket) => {
     socket.emit('message:history', chatService.getRecentMessages(newRoom));
   });
 
-  // 3. Envio de Mensagem (com suporte a resposta)
-  socket.on('message:send', ({ text, room, replyTo }) => {
+  // 3. Envio de Mensagem (com suporte a resposta e preservação do userId)
+  socket.on('message:send', ({ text, room, replyTo, userId }) => {
     if (isRateLimited(socket.id)) {
       return socket.emit('error', { message: 'Você está enviando mensagens muito rápido.' });
     }
@@ -90,6 +90,11 @@ export const registerChatHandlers = (io, socket) => {
     const { message, error } = chatService.addMessage(socket.id, text, targetRoom, replyTo);
     if (error) {
       return socket.emit('error', { message: error });
+    }
+
+    // Se o userId foi repassado na mensagem, garante que ele estará salvo no objeto emitido
+    if (userId) {
+      message.userId = userId;
     }
 
     io.to(targetRoom).emit('message:receive', message);

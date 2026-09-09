@@ -1,78 +1,116 @@
-import { useState } from 'react';
-import { useSocket } from './hooks/useSocket';
-import { LoginScreen } from './components/LoginScreen';
-import { ChatHeader } from './components/ChatHeader';
-import { MessageList } from './components/MessageList';
-import { MessageInput } from './components/MessageInput';
+import { useState, useEffect } from 'react'
+import { supabase } from './supabaseClient'
+import LoginScreen from './components/LoginScreen'
+import { ChatHeader } from './components/ChatHeader'
+import { MessageList } from './components/MessageList'
+import { MessageInput } from './components/MessageInput'
+import { useSocket } from './hooks/useSocket'
 
 export default function App() {
-  const [joined, setJoined] = useState(false);
-  const [replyTo, setReplyTo] = useState(null); // 🟢 1. Estado para gerenciar a citação/resposta
+  const [session, setSession] = useState(null)
+  const [profile, setProfile] = useState(null)
+  const [currentRoom, setCurrentRoom] = useState('Geral')
+  const [replyTo, setReplyTo] = useState(null)
 
-  const {
-    socketId,
-    isConnected,
-    messages,
-    users,
-    typingUsers,
-    error,
-    currentRoom,
-    joinChat,
-    switchRoom,
-    sendMessage,
-    editMessage,   // 🟢 2. Importado do hook
-    deleteMessage, // 🟢 2. Importado do hook
-    setTyping
-  } = useSocket();
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session)
+      if (session) fetchProfile(session)
+    })
 
-  const handleJoin = (username, callback) => {
-    joinChat(username, (response) => {
-      if (response.success) {
-        setJoined(true);
-      }
-      if (callback) callback(response);
-    });
-  };
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session)
+      if (session) fetchProfile(session)
+      else setProfile(null)
+    })
 
-  if (!joined) {
-    return (
-      <div className="app-container">
-        <LoginScreen onJoin={handleJoin} />
-      </div>
-    );
+    return () => subscription.unsubscribe()
+  }, [])
+
+  const fetchProfile = async (currentSession) => {
+    if (!currentSession?.user?.id) return
+    const userId = currentSession.user.id
+
+    const { data } = await supabase
+      .from('profiles')
+      .select('username')
+      .eq('id', userId)
+      .maybeSingle()
+
+    if (data && data.username) {
+      setProfile(data)
+    } else {
+      const metaName = currentSession.user.user_metadata?.display_name
+      const defaultUsername = metaName || currentSession.user.email?.split('@')[0] || 'Usuário'
+      await supabase.from('profiles').upsert([{ id: userId, username: defaultUsername }])
+      setProfile({ username: defaultUsername })
+    }
   }
 
+  const handleLogout = async () => {
+    await supabase.auth.signOut()
+    setSession(null)
+    setProfile(null)
+  }
+
+  const username = profile?.username || session?.user?.user_metadata?.display_name || session?.user?.email?.split('@')[0] || 'Usuário'
+  const userId = session?.user?.id || ''
+
+  const socketData = useSocket(currentRoom, username, userId) || {}
+  const {
+    messages = [],
+    onlineUsers = [],
+    typingUsers = [],
+    sendMessage = () => {},
+    sendTyping = () => {},
+    handleEdit = () => {},
+    handleDelete = () => {}
+  } = socketData
+
+  if (!session) return <LoginScreen />
+
   return (
-    <div className="app-container">
-      {error && <div className="error-banner">{error}</div>}
-      {!isConnected && (
-        <div className="error-banner" style={{ background: '#eab308', color: '#000' }}>
-          Conexão perdida. Reconectando ao servidor...
+    <div style={{ backgroundColor: '#0f172a', height: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '10px' }}>
+      <div 
+        className="chat-app" 
+        style={{ 
+          width: '100%', 
+          maxWidth: '1200px', 
+          height: '92vh', 
+          backgroundColor: '#1e293b', 
+          borderRadius: '16px', 
+          display: 'flex', 
+          flexDirection: 'column',
+          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5)',
+          overflow: 'hidden'
+        }}
+      >
+        <ChatHeader
+          currentRoom={currentRoom}
+          users={onlineUsers}
+          isConnected={true}
+          onSwitchRoom={setCurrentRoom}
+          onLogout={handleLogout}
+        />
+        
+        <div style={{ flex: 1, overflowY: 'auto', padding: '10px' }}>
+          <MessageList
+            messages={messages}
+            currentUserId={userId}
+            typingUsers={typingUsers}
+            onReply={(msg) => setReplyTo(msg)}
+            onEdit={handleEdit}
+            onDelete={handleDelete}
+          />
         </div>
-      )}
-      <ChatHeader
-        users={users}
-        isConnected={isConnected}
-        currentRoom={currentRoom}
-        onSwitchRoom={switchRoom}
-      />
 
-      {/* 🟢 3. Props passadas corretamente para a lista de mensagens */}
-      <MessageList
-        messages={messages}
-        currentSocketId={socketId}
-        typingUsers={typingUsers}
-        onReply={(msg) => setReplyTo(msg)}
-        onEdit={editMessage}
-        onDelete={deleteMessage}
-      />
-
-      <MessageInput
-        onSendMessage={sendMessage}
-        onTyping={setTyping}
-        replyTo={replyTo}
-        onCancelReply={() => setReplyTo(null)}
-      />
+        <MessageInput
+          onSendMessage={sendMessage}
+          onTyping={sendTyping}
+          replyTo={replyTo}
+          onCancelReply={() => setReplyTo(null)}
+        />
+      </div>
     </div>
-  );
+  )
 }

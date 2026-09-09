@@ -1,22 +1,17 @@
-import { sanitizeInput } from '../utils/sanitize.js';
-
 class ChatService {
   constructor() {
-    this.users = new Map(); // socket.id -> { id, username, room }
-    this.messages = [];     // Array de mensagens em memória
-    this.MAX_MESSAGES = 100;
+    this.users = new Map();
+    this.messages = new Map();
   }
 
-  addUser(socketId, username, room = 'Geral') {
-    const cleanUsername = sanitizeInput(username);
-    
-    if (!cleanUsername || cleanUsername.length > 20) {
-      return { error: 'Nome inválido. Deve ter entre 1 e 20 caracteres.' };
-    }
-
-    const user = { id: socketId, username: cleanUsername, room };
+  addUser(socketId, username, room, userId) {
+    const user = { socketId, username, room, userId };
     this.users.set(socketId, user);
     return { user };
+  }
+
+  getUser(socketId) {
+    return this.users.get(socketId);
   }
 
   updateUserRoom(socketId, newRoom) {
@@ -36,76 +31,74 @@ class ChatService {
     return user;
   }
 
-  getUser(socketId) {
-    return this.users.get(socketId);
-  }
-
-  getRoomUsers(room = 'Geral') {
+  getRoomUsers(room) {
     return Array.from(this.users.values()).filter(u => u.room === room);
   }
 
-  addMessage(socketId, text, room = 'Geral', replyTo = null) {
+  addMessage(socketId, text, room, replyTo) {
     const user = this.getUser(socketId);
-    if (!user) return { error: 'Usuário não registrado.' };
-
-    const cleanText = sanitizeInput(text);
-    if (!cleanText || cleanText.length > 500) {
-      return { error: 'Mensagem inválida. Deve ter entre 1 e 500 caracteres.' };
-    }
+    if (!user) return { error: 'Usuário não encontrado.' };
 
     const message = {
-      id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      type: 'user',
+      id: `${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      senderId: user.socketId,
+      userId: user.userId,
       username: user.username,
-      userId: user.id,
-      text: cleanText,
-      room: room,
-      timestamp: new Date().toISOString(),
-      isEdited: false,
-      replyTo: replyTo ? { id: replyTo.id, username: replyTo.username, text: replyTo.text } : null
+      text,
+      room,
+      replyTo,
+      createdAt: new Date().toISOString()
     };
 
-    this.messages.push(message);
-    if (this.messages.length > this.MAX_MESSAGES) {
-      this.messages.shift();
+    if (!this.messages.has(room)) {
+      this.messages.set(room, []);
     }
+    this.messages.get(room).push(message);
 
     return { message };
   }
 
   editMessage(socketId, messageId, newText) {
     const user = this.getUser(socketId);
-    const message = this.messages.find(m => m.id === messageId);
+    if (!user) return { error: 'Usuário não encontrado.' };
+
+    const roomMessages = this.messages.get(user.room) || [];
+    const message = roomMessages.find(m => m.id === messageId);
 
     if (!message) return { error: 'Mensagem não encontrada.' };
-    if (message.userId !== user?.id) return { error: 'Você só pode editar suas próprias mensagens.' };
-
-    const cleanText = sanitizeInput(newText);
-    if (!cleanText || cleanText.length > 500) {
-      return { error: 'Mensagem inválida.' };
+    
+    if (message.senderId !== socketId && message.userId !== user.userId) {
+      return { error: 'Sem permissão para editar esta mensagem.' };
     }
 
-    message.text = cleanText;
-    message.isEdited = true;
+    message.text = newText;
+    message.editedAt = new Date().toISOString();
 
     return { message };
   }
 
   deleteMessage(socketId, messageId) {
     const user = this.getUser(socketId);
-    const index = this.messages.findIndex(m => m.id === messageId);
+    if (!user) return { error: 'Usuário não encontrado.' };
+
+    const roomMessages = this.messages.get(user.room) || [];
+    const index = roomMessages.findIndex(m => m.id === messageId);
 
     if (index === -1) return { error: 'Mensagem não encontrada.' };
 
-    const message = this.messages[index];
-    if (message.userId !== user?.id) return { error: 'Você só pode excluir suas próprias mensagens.' };
+    const message = roomMessages[index];
+    
+    if (message.senderId !== socketId && message.userId !== user.userId) {
+      return { error: 'Sem permissão para deletar esta mensagem.' };
+    }
 
-    this.messages.splice(index, 1);
-    return { success: true, messageId, room: message.room };
+    roomMessages.splice(index, 1);
+
+    return { success: true, room: user.room };
   }
 
-  getRecentMessages(room = 'Geral') {
-    return this.messages.filter(msg => msg.room === room);
+  getRecentMessages(room) {
+    return this.messages.get(room) || [];
   }
 }
 

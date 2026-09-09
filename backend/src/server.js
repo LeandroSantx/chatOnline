@@ -11,18 +11,27 @@ const app = express();
 const httpServer = createServer(app);
 
 const PORT = process.env.PORT || 3001;
-const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
 
-app.use(cors({ origin: CLIENT_ORIGIN }));
+// Permite conexões do Vite (seja via localhost, IP local ou porta dinâmica)
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  process.env.CLIENT_ORIGIN
+].filter(Boolean);
+
+app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json());
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 const io = new Server(httpServer, {
   cors: {
-    origin: CLIENT_ORIGIN,
-    methods: ['GET', 'POST']
-  }
+    origin: allowedOrigins,
+    methods: ['GET', 'POST'],
+    credentials: true
+  },
+  // Suporte garantido aos dois transportes do Socket.io
+  transports: ['websocket', 'polling']
 });
 
 io.on('connection', (socket) => {
