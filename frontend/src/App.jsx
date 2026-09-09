@@ -73,50 +73,49 @@ export default function App() {
   if (!session) return <LoginScreen />
 
   return (
-    <div style={{ backgroundColor: '#0f172a', height: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '10px' }}>
-      <div 
-        className="chat-app" 
-        style={{ 
-          width: '100%', 
-          maxWidth: '1200px', 
-          height: '92vh', 
-          backgroundColor: '#1e293b', 
-          borderRadius: '16px', 
-          display: 'flex', 
-          flexDirection: 'column',
-          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5)',
-          overflow: 'hidden'
-        }}
-      >
-        <ChatHeader
+  <div style={{ backgroundColor: '#0f172a', height: '100dvh', width: '100vw', display: 'flex', justifyContent: 'center', alignItems: 'center', overflow: 'hidden' }}>
+    <div 
+      className="chat-app" 
+      style={{ 
+        width: '100%', 
+        maxWidth: '1200px', 
+        height: '100dvh', 
+        backgroundColor: '#1e293b', 
+        display: 'flex', 
+        flexDirection: 'column',
+        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)',
+        overflow: 'hidden'
+      }}
+    >
+      <ChatHeader
+        currentRoom={currentRoom}
+        users={onlineUsers}
+        isConnected={true}
+        onSwitchRoom={setCurrentRoom}
+        onLogout={handleLogout}
+      />
+      
+      <div style={{ flex: 1, overflowY: 'auto', padding: '10px' }}>
+        <MessageList
+          messages={messages}
+          currentUserId={userId}
           currentRoom={currentRoom}
-          users={onlineUsers}
-          isConnected={true}
-          onSwitchRoom={setCurrentRoom}
-          onLogout={handleLogout}
-        />
-        
-        <div style={{ flex: 1, overflowY: 'auto', padding: '10px' }}>
-          <MessageList
-            messages={messages}
-            currentUserId={userId}
-            currentRoom={currentRoom}
-            typingUsers={typingUsers}
-            onReply={(msg) => setReplyTo(msg)}
-            onEdit={handleEdit}
-            onDelete={handleDelete}
-          />
-        </div>
-
-        <MessageInput
-          currentRoom={currentRoom}
-          isAdmin={isAdmin}
-          onSendMessage={sendMessage}
-          onTyping={sendTyping}
-          replyTo={replyTo}
-          onCancelReply={() => setReplyTo(null)}
+          typingUsers={typingUsers}
+          onReply={(msg) => setReplyTo(msg)}
+          onEdit={handleEdit}
+          onDelete={handleDelete}
         />
       </div>
+
+      <MessageInput
+        currentRoom={currentRoom}
+        isAdmin={isAdmin}
+        onSendMessage={sendMessage}
+        onTyping={sendTyping}
+        replyTo={replyTo}
+        onCancelReply={() => setReplyTo(null)}
+      />
     </div>
-  )
+  </div>
+)
 }
