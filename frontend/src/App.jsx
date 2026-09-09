@@ -4,7 +4,7 @@ import LoginScreen from './components/LoginScreen'
 import { ChatHeader } from './components/ChatHeader'
 import { MessageList } from './components/MessageList'
 import { MessageInput } from './components/MessageInput'
-import { useSocket } from './hooks/useSocket'
+import { useSocket, socket } from './hooks/useSocket'
 
 export default function App() {
   const [session, setSession] = useState(null)
@@ -59,7 +59,8 @@ export default function App() {
   // Verifica se o usuário atual é o administrador do sistema
   const isAdmin = username === 'leandro.pf.am'
 
-  const socketData = useSocket(currentRoom, username, userId) || {}
+  // Passamos setCurrentRoom como callback (onRoomInvite) para aceitar trocas de salas em tempo real
+  const socketData = useSocket(currentRoom, username, userId, setCurrentRoom) || {}
   const {
     messages = [],
     onlineUsers = [],
@@ -70,52 +71,63 @@ export default function App() {
     handleDelete = () => {}
   } = socketData
 
+  // Função para trocar de sala e notificar o backend/amigo em tempo real
+  const handleSwitchRoom = (newRoom, targetUser = null) => {
+    setCurrentRoom(newRoom)
+    if (socket && socket.connected) {
+      socket.emit('room:join', {
+        room: newRoom,
+        targetUser: targetUser
+      })
+    }
+  }
+
   if (!session) return <LoginScreen />
 
   return (
-  <div style={{ backgroundColor: '#0f172a', height: '100dvh', width: '100vw', display: 'flex', justifyContent: 'center', alignItems: 'center', overflow: 'hidden' }}>
-    <div 
-      className="chat-app" 
-      style={{ 
-        width: '100%', 
-        maxWidth: '1200px', 
-        height: '100dvh', 
-        backgroundColor: '#1e293b', 
-        display: 'flex', 
-        flexDirection: 'column',
-        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)',
-        overflow: 'hidden'
-      }}
-    >
-      <ChatHeader
-        currentRoom={currentRoom}
-        users={onlineUsers}
-        isConnected={true}
-        onSwitchRoom={setCurrentRoom}
-        onLogout={handleLogout}
-      />
-      
-      <div style={{ flex: 1, overflowY: 'auto', padding: '10px' }}>
-        <MessageList
-          messages={messages}
-          currentUserId={userId}
+    <div style={{ backgroundColor: '#0f172a', height: '100dvh', width: '100vw', display: 'flex', justifyContent: 'center', alignItems: 'center', overflow: 'hidden' }}>
+      <div 
+        className="chat-app" 
+        style={{ 
+          width: '100%', 
+          maxWidth: '1200px', 
+          height: '100dvh', 
+          backgroundColor: '#1e293b', 
+          display: 'flex', 
+          flexDirection: 'column',
+          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)',
+          overflow: 'hidden'
+        }}
+      >
+        <ChatHeader
           currentRoom={currentRoom}
-          typingUsers={typingUsers}
-          onReply={(msg) => setReplyTo(msg)}
-          onEdit={handleEdit}
-          onDelete={handleDelete}
+          users={onlineUsers}
+          isConnected={true}
+          onSwitchRoom={handleSwitchRoom}
+          onLogout={handleLogout}
+        />
+        
+        <div style={{ flex: 1, overflowY: 'auto', padding: '10px' }}>
+          <MessageList
+            messages={messages}
+            currentUserId={userId}
+            currentRoom={currentRoom}
+            typingUsers={typingUsers}
+            onReply={(msg) => setReplyTo(msg)}
+            onEdit={handleEdit}
+            onDelete={handleDelete}
+          />
+        </div>
+
+        <MessageInput
+          currentRoom={currentRoom}
+          isAdmin={isAdmin}
+          onSendMessage={sendMessage}
+          onTyping={sendTyping}
+          replyTo={replyTo}
+          onCancelReply={() => setReplyTo(null)}
         />
       </div>
-
-      <MessageInput
-        currentRoom={currentRoom}
-        isAdmin={isAdmin}
-        onSendMessage={sendMessage}
-        onTyping={sendTyping}
-        replyTo={replyTo}
-        onCancelReply={() => setReplyTo(null)}
-      />
     </div>
-  </div>
-)
+  )
 }

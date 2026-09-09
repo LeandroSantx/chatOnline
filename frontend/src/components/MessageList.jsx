@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 
 export const MessageList = ({
   messages = [],
@@ -11,8 +11,17 @@ export const MessageList = ({
 }) => {
   const [editingId, setEditingId] = useState(null)
   const [editText, setEditText] = useState('')
+  const messagesEndRef = useRef(null)
 
   const isGeneralRoom = currentRoom === '100000' || currentRoom === 'Geral'
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }
+
+  useEffect(() => {
+    scrollToBottom()
+  }, [messages, typingUsers])
 
   const startEditing = (msg) => {
     setEditingId(msg.id)
@@ -64,6 +73,31 @@ export const MessageList = ({
       )}
 
       {messages.map((msg) => {
+        // Renderização para Mensagens de Sistema (Ex: "Entrou no chat")
+        if (msg.type === 'system') {
+          // Oculta avisos de entrada/saída em conversas privadas (só exibe em salas públicas/grupos)
+          if (!isGeneralRoom) return null
+
+          return (
+            <div
+              key={msg.id}
+              style={{
+                alignSelf: 'center',
+                backgroundColor: '#334155',
+                color: '#94a3b8',
+                fontSize: '0.75rem',
+                padding: '4px 12px',
+                borderRadius: '12px',
+                margin: '4px 0',
+                textAlign: 'center',
+                maxWidth: '80%'
+              }}
+            >
+              {msg.text}
+            </div>
+          )
+        }
+
         const isMe = Boolean(
           currentUserId && (msg.userId === currentUserId || msg.senderId === currentUserId)
         )
@@ -156,7 +190,7 @@ export const MessageList = ({
                 <div style={{ fontSize: '0.95rem', lineHeight: '1.4' }}>{msg.text}</div>
               )}
 
-              {/* Rodapé do Balão (Hora + Botões) */}
+              {/* Rodapé do Balão */}
               <div
                 style={{
                   display: 'flex',
@@ -213,6 +247,8 @@ export const MessageList = ({
           {typingUsers.join(', ')} {typingUsers.length === 1 ? 'está digitando...' : 'estão digitando...'}
         </div>
       )}
+
+      <div ref={messagesEndRef} />
     </div>
   )
 }

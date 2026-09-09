@@ -18,9 +18,9 @@ const isRateLimited = (socketId) => {
 };
 
 export const registerChatHandlers = (io, socket) => {
-  const defaultRoom = 'Geral';
+  const defaultRoom = '100000';
 
-  // 1. Entrada Inicial do Usuário (recebe userId do Supabase)
+  // 1. Entrada Inicial do Usuário
   socket.on('user:join', ({ username, userId, room }, callback) => {
     const targetRoom = room || defaultRoom;
     const { user, error } = chatService.addUser(socket.id, username, targetRoom, userId);
@@ -29,24 +29,19 @@ export const registerChatHandlers = (io, socket) => {
       return callback && callback({ success: false, error });
     }
 
+    // Cria as salas pessoais do usuário no Socket.io para receber convites/mensagens diretas
+    socket.join(`user:${username}`);
+    socket.join(`user:${userId}`);
     socket.join(targetRoom);
 
     socket.emit('message:history', chatService.getRecentMessages(targetRoom));
-
-    const systemMsg = {
-      id: `${Date.now()}-sys`,
-      type: 'system',
-      text: `${user.username} entrou na sala ${targetRoom}.`
-    };
-    socket.to(targetRoom).emit('message:receive', systemMsg);
-
     io.to(targetRoom).emit('users:update', chatService.getRoomUsers(targetRoom));
 
     if (callback) callback({ success: true });
   });
 
-  // 2. Troca de Sala Privada / Canal
-  socket.on('room:join', ({ room }) => {
+  // 2. Troca de Sala Privada / Canal (notifica o amigo se for PV)
+  socket.on('room:join', ({ room, targetUser, targetUserId }) => {
     const user = chatService.getUser(socket.id);
     if (!user || !room) return;
 
@@ -59,26 +54,21 @@ export const registerChatHandlers = (io, socket) => {
     socket.join(newRoom);
     chatService.updateUserRoom(socket.id, newRoom);
 
-    const exitMsg = {
-      id: `${Date.now()}-sys`,
-      type: 'system',
-      text: `${user.username} saiu da sala.`
-    };
-    socket.to(oldRoom).emit('message:receive', exitMsg);
-    io.to(oldRoom).emit('users:update', chatService.getRoomUsers(oldRoom));
+    const isPublic = newRoom === '100000' || newRoom.toLowerCase() === 'geral';
 
-    const enterMsg = {
-      id: `${Date.now()}-sys`,
-      type: 'system',
-      text: `${user.username} entrou na sala.`
-    };
-    socket.to(newRoom).emit('message:receive', enterMsg);
+    // Notifica o outro usuário para entrar na mesma sala em tempo real
+    if (!isPublic) {
+      if (targetUser) io.to(`user:${targetUser}`).emit('room:invite', { room: newRoom, from: user.username });
+      if (targetUserId) io.to(`user:${targetUserId}`).emit('room:invite', { room: newRoom, from: user.username });
+    }
+
+    io.to(oldRoom).emit('users:update', chatService.getRoomUsers(oldRoom));
     io.to(newRoom).emit('users:update', chatService.getRoomUsers(newRoom));
 
     socket.emit('message:history', chatService.getRecentMessages(newRoom));
   });
 
-  // 3. Envio de Mensagem (com suporte a resposta e preservação do userId)
+  // 3. Envio de Mensagem
   socket.on('message:send', ({ text, room, replyTo, userId }) => {
     if (isRateLimited(socket.id)) {
       return socket.emit('error', { message: 'Você está enviando mensagens muito rápido.' });
@@ -92,7 +82,6 @@ export const registerChatHandlers = (io, socket) => {
       return socket.emit('error', { message: error });
     }
 
-    // Se o userId foi repassado na mensagem, garante que ele estará salvo no objeto emitido
     if (userId) {
       message.userId = userId;
     }
@@ -145,12 +134,6 @@ export const registerChatHandlers = (io, socket) => {
     rateLimits.delete(socket.id);
 
     if (user) {
-      const systemMsg = {
-        id: `${Date.now()}-sys`,
-        type: 'system',
-        text: `${user.username} saiu do chat.`
-      };
-      io.to(user.room).emit('message:receive', systemMsg);
       io.to(user.room).emit('users:update', chatService.getRoomUsers(user.room));
     }
   });

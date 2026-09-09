@@ -9,7 +9,7 @@ export const socket = io(SOCKET_URL, {
   autoConnect: true
 })
 
-export function useSocket(currentRoom, username, userId) {
+export function useSocket(currentRoom, username, userId, onRoomInvite) {
   const [messages, setMessages] = useState([])
   const [onlineUsers, setOnlineUsers] = useState([])
   const [typingUsers, setTypingUsers] = useState([])
@@ -59,6 +59,13 @@ export function useSocket(currentRoom, username, userId) {
       })
     })
 
+    // Ouve o convite/redirecionamento de sala privada em tempo real
+    socket.on('room:invite', ({ room }) => {
+      if (onRoomInvite) {
+        onRoomInvite(room)
+      }
+    })
+
     return () => {
       socket.off('connect', onConnect)
       socket.off('message:history')
@@ -67,8 +74,9 @@ export function useSocket(currentRoom, username, userId) {
       socket.off('message:deleted')
       socket.off('users:update')
       socket.off('typing:update')
+      socket.off('room:invite')
     }
-  }, [username, userId])
+  }, [username, userId, currentRoom, onRoomInvite])
 
   // Troca de sala
   useEffect(() => {
