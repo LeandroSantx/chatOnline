@@ -3,6 +3,7 @@ import React, { useState } from 'react'
 export const MessageList = ({
   messages = [],
   currentUserId,
+  currentRoom = '100000',
   typingUsers = [],
   onReply,
   onEdit,
@@ -10,6 +11,8 @@ export const MessageList = ({
 }) => {
   const [editingId, setEditingId] = useState(null)
   const [editText, setEditText] = useState('')
+
+  const isGeneralRoom = currentRoom === '100000' || currentRoom === 'Geral'
 
   const startEditing = (msg) => {
     setEditingId(msg.id)
@@ -30,6 +33,36 @@ export const MessageList = ({
 
   return (
     <div className="message-list" style={{ padding: '15px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      
+      {/* Card Fixo de Tutorial / Anúncios na Sala Geral */}
+      {isGeneralRoom && (
+        <div style={{
+          backgroundColor: '#1e293b',
+          border: '1px solid #6366f1',
+          borderRadius: '12px',
+          padding: '16px',
+          color: '#f8fafc',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          marginBottom: '10px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+            <span style={{ fontSize: '1.2rem' }}>📌</span>
+            <h3 style={{ margin: 0, fontSize: '1.05rem', color: '#818cf8' }}>
+              Bem-vindo ao RESENHA — Guia do Sistema
+            </h3>
+          </div>
+          <p style={{ margin: '0 0 12px 0', fontSize: '0.85rem', color: '#94a3b8', lineHeight: '1.4' }}>
+            Este é o canal geral de avisos. Confira abaixo as instruções para utilizar a plataforma:
+          </p>
+          <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '0.85rem', color: '#cbd5e1', lineHeight: '1.6' }}>
+            <li><strong>Criar Salas Privadas:</strong> Abra o menu lateral <code>☰</code> e clique em <em>+ Criar Nova Sala</em>.</li>
+            <li><strong>Entrar por ID:</strong> Digite o código de 6 dígitos no menu lateral para acessar uma sala existente.</li>
+            <li><strong>Apagar Salas:</strong> Você pode remover salas da sua lista a qualquer momento pelo botão <code>✕</code>.</li>
+            <li><strong>Mensagens:</strong> Você pode responder a mensagens específicas ou editá-las/excluí-las no menu de cada balão.</li>
+          </ul>
+        </div>
+      )}
+
       {messages.map((msg) => {
         const isMe = Boolean(
           currentUserId && (msg.userId === currentUserId || msg.senderId === currentUserId)

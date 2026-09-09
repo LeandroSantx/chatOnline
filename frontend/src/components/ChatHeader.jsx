@@ -68,8 +68,32 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
     setIsMenuOpen(false)
   }
 
-  const handleRemoveRoom = (e, roomId) => {
+  // Deleta a sala no backend (porta 3001) e atualiza a interface local
+  const handleRemoveRoom = async (e, roomId) => {
     e.stopPropagation()
+
+    if (!window.confirm('Tem certeza de que deseja apagar esta sala definitivamente?')) {
+      return
+    }
+
+    try {
+      // Chamada ajustada para a porta 3001
+      const response = await fetch(`http://localhost:3001/api/rooms/${roomId}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        console.warn('Backend retornou erro ao deletar:', errorData.error)
+      }
+    } catch (error) {
+      console.warn('Backend inacessível ou offline. Deletando apenas localmente:', error)
+    }
+
+    // Atualiza a interface e a memória local do navegador
     const updatedList = roomsList.filter(r => r.id !== roomId)
     setRoomsList(updatedList)
 

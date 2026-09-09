@@ -9,7 +9,7 @@ import { useSocket } from './hooks/useSocket'
 export default function App() {
   const [session, setSession] = useState(null)
   const [profile, setProfile] = useState(null)
-  const [currentRoom, setCurrentRoom] = useState('Geral')
+  const [currentRoom, setCurrentRoom] = useState('100000') // Inicia por padrão na sala Geral (ID: 100000)
   const [replyTo, setReplyTo] = useState(null)
 
   useEffect(() => {
@@ -56,6 +56,9 @@ export default function App() {
   const username = profile?.username || session?.user?.user_metadata?.display_name || session?.user?.email?.split('@')[0] || 'Usuário'
   const userId = session?.user?.id || ''
 
+  // Verifica se o usuário atual é o administrador do sistema
+  const isAdmin = username === 'leandro.pf.am'
+
   const socketData = useSocket(currentRoom, username, userId) || {}
   const {
     messages = [],
@@ -97,6 +100,7 @@ export default function App() {
           <MessageList
             messages={messages}
             currentUserId={userId}
+            currentRoom={currentRoom}
             typingUsers={typingUsers}
             onReply={(msg) => setReplyTo(msg)}
             onEdit={handleEdit}
@@ -105,6 +109,8 @@ export default function App() {
         </div>
 
         <MessageInput
+          currentRoom={currentRoom}
+          isAdmin={isAdmin}
           onSendMessage={sendMessage}
           onTyping={sendTyping}
           replyTo={replyTo}

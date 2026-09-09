@@ -1,10 +1,22 @@
 import React, { useState, useRef } from 'react'
 
-export const MessageInput = ({ onSendMessage, onTyping, replyTo, onCancelReply }) => {
+export const MessageInput = ({ 
+  onSendMessage, 
+  onTyping, 
+  replyTo, 
+  onCancelReply, 
+  currentRoom = '100000', 
+  isAdmin = false 
+}) => {
   const [text, setText] = useState('')
   const typingTimeoutRef = useRef(null)
 
+  // O canal Geral (100000 ou 'Geral') só pode ser escrito por administradores
+  const isGeneralRoom = currentRoom === '100000' || currentRoom === 'Geral'
+  const isReadOnly = isGeneralRoom && !isAdmin
+
   const handleTextChange = (e) => {
+    if (isReadOnly) return
     const value = e.target.value
     setText(value)
 
@@ -19,7 +31,7 @@ export const MessageInput = ({ onSendMessage, onTyping, replyTo, onCancelReply }
 
   const handleSend = (e) => {
     e?.preventDefault()
-    if (!text.trim()) return
+    if (!text.trim() || isReadOnly) return
 
     onSendMessage(text.trim(), replyTo)
     setText('')
@@ -37,7 +49,7 @@ export const MessageInput = ({ onSendMessage, onTyping, replyTo, onCancelReply }
 
   return (
     <div style={{ backgroundColor: '#0f172a', padding: '12px 16px', borderTop: '1px solid #334155' }}>
-      {replyTo && (
+      {replyTo && !isReadOnly && (
         <div style={{ 
           display: 'flex', 
           justify: 'space-between', 
@@ -62,35 +74,43 @@ export const MessageInput = ({ onSendMessage, onTyping, replyTo, onCancelReply }
 
       <form onSubmit={handleSend} style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
         <textarea
-          value={text}
+          value={isReadOnly ? '' : text}
           onChange={handleTextChange}
           onKeyDown={handleKeyDown}
+          disabled={isReadOnly}
+          placeholder={
+            isReadOnly 
+              ? '🔒 Canal de anúncios' 
+              : 'Digite sua mensagem...'
+          }
           rows={1}
           style={{
             flex: 1,
-            backgroundColor: '#1e293b',
-            color: '#f8fafc',
+            backgroundColor: isReadOnly ? '#1e293b80' : '#1e293b',
+            color: isReadOnly ? '#94a3b8' : '#f8fafc',
             border: '1px solid #334155',
             borderRadius: '10px',
             padding: '10px 14px',
             fontSize: '0.95rem',
             resize: 'none',
             outline: 'none',
-            fontFamily: 'inherit'
+            fontFamily: 'inherit',
+            cursor: isReadOnly ? 'not-allowed' : 'text'
           }}
         />
         <button
           type="submit"
-          disabled={!text.trim()}
+          disabled={isReadOnly || !text.trim()}
           style={{
-            backgroundColor: text.trim() ? '#4f46e5' : '#334155',
+            backgroundColor: !isReadOnly && text.trim() ? '#4f46e5' : '#334155',
             color: '#ffffff',
             border: 'none',
             borderRadius: '10px',
             padding: '10px 20px',
             fontWeight: '600',
-            cursor: text.trim() ? 'pointer' : 'not-allowed',
-            transition: 'background-color 0.2s'
+            cursor: !isReadOnly && text.trim() ? 'pointer' : 'not-allowed',
+            transition: 'background-color 0.2s',
+            opacity: isReadOnly ? 0.6 : 1
           }}
         >
           Enviar
