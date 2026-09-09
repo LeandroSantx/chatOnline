@@ -29,6 +29,18 @@ export const useSocket = () => {
       setMessages((prev) => [...prev, msg]);
     });
 
+    // Atualiza mensagem editada na lista
+    socket.on('message:updated', (updatedMsg) => {
+      setMessages((prev) =>
+        prev.map((msg) => (msg.id === updatedMsg.id ? updatedMsg : msg))
+      );
+    });
+
+    // Remove mensagem excluída da lista
+    socket.on('message:deleted', ({ messageId }) => {
+      setMessages((prev) => prev.filter((msg) => msg.id !== messageId));
+    });
+
     socket.on('users:update', (updatedUsers) => setUsers(updatedUsers));
 
     socket.on('typing:update', ({ username, isTyping }) => {
@@ -60,13 +72,25 @@ export const useSocket = () => {
     if (socketRef.current && isConnected && newRoom.trim()) {
       socketRef.current.emit('room:join', { room: newRoom });
       setCurrentRoom(newRoom);
-      setMessages([]); // Limpa as mensagens da sala anterior
+      setMessages([]);
     }
   };
 
-  const sendMessage = (text) => {
+  const sendMessage = (text, replyTo = null) => {
     if (socketRef.current && isConnected) {
-      socketRef.current.emit('message:send', { text, room: currentRoom });
+      socketRef.current.emit('message:send', { text, room: currentRoom, replyTo });
+    }
+  };
+
+  const editMessage = (messageId, newText) => {
+    if (socketRef.current && isConnected) {
+      socketRef.current.emit('message:edit', { messageId, newText });
+    }
+  };
+
+  const deleteMessage = (messageId) => {
+    if (socketRef.current && isConnected) {
+      socketRef.current.emit('message:delete', { messageId });
     }
   };
 
@@ -87,6 +111,8 @@ export const useSocket = () => {
     joinChat,
     switchRoom,
     sendMessage,
+    editMessage,
+    deleteMessage,
     setTyping
   };
 };

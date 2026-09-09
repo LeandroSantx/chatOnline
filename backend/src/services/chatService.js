@@ -19,7 +19,6 @@ class ChatService {
     return { user };
   }
 
-  // Novo método para atualizar a sala do usuário no Map
   updateUserRoom(socketId, newRoom) {
     const user = this.users.get(socketId);
     if (user) {
@@ -45,7 +44,7 @@ class ChatService {
     return Array.from(this.users.values()).filter(u => u.room === room);
   }
 
-  addMessage(socketId, text, room = 'Geral') {
+  addMessage(socketId, text, room = 'Geral', replyTo = null) {
     const user = this.getUser(socketId);
     if (!user) return { error: 'Usuário não registrado.' };
 
@@ -60,8 +59,10 @@ class ChatService {
       username: user.username,
       userId: user.id,
       text: cleanText,
-      room: room, // Vincula a mensagem à sala específica
-      timestamp: new Date().toISOString()
+      room: room,
+      timestamp: new Date().toISOString(),
+      isEdited: false,
+      replyTo: replyTo ? { id: replyTo.id, username: replyTo.username, text: replyTo.text } : null
     };
 
     this.messages.push(message);
@@ -72,7 +73,37 @@ class ChatService {
     return { message };
   }
 
-  // Retorna apenas o histórico pertencente à sala solicitada
+  editMessage(socketId, messageId, newText) {
+    const user = this.getUser(socketId);
+    const message = this.messages.find(m => m.id === messageId);
+
+    if (!message) return { error: 'Mensagem não encontrada.' };
+    if (message.userId !== user?.id) return { error: 'Você só pode editar suas próprias mensagens.' };
+
+    const cleanText = sanitizeInput(newText);
+    if (!cleanText || cleanText.length > 500) {
+      return { error: 'Mensagem inválida.' };
+    }
+
+    message.text = cleanText;
+    message.isEdited = true;
+
+    return { message };
+  }
+
+  deleteMessage(socketId, messageId) {
+    const user = this.getUser(socketId);
+    const index = this.messages.findIndex(m => m.id === messageId);
+
+    if (index === -1) return { error: 'Mensagem não encontrada.' };
+
+    const message = this.messages[index];
+    if (message.userId !== user?.id) return { error: 'Você só pode excluir suas próprias mensagens.' };
+
+    this.messages.splice(index, 1);
+    return { success: true, messageId, room: message.room };
+  }
+
   getRecentMessages(room = 'Geral') {
     return this.messages.filter(msg => msg.room === room);
   }

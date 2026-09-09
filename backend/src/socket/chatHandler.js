@@ -1,6 +1,5 @@
 import { chatService } from '../services/chatService.js';
 
-// Rate Limiter simples baseado em memória
 const rateLimits = new Map();
 
 const isRateLimited = (socketId) => {
@@ -15,7 +14,7 @@ const isRateLimited = (socketId) => {
   }
 
   rateLimits.set(socketId, userLimit);
-  return userLimit.count > 5; // Máximo 5 mensagens a cada 2 segundos
+  return userLimit.count > 5;
 };
 
 export const registerChatHandlers = (io, socket) => {
@@ -32,10 +31,8 @@ export const registerChatHandlers = (io, socket) => {
 
     socket.join(targetRoom);
 
-    // Envia histórico da sala atual
     socket.emit('message:history', chatService.getRecentMessages(targetRoom));
 
-    // Notifica outros usuários da sala
     const systemMsg = {
       id: `${Date.now()}-sys`,
       type: 'system',
@@ -43,7 +40,6 @@ export const registerChatHandlers = (io, socket) => {
     };
     socket.to(targetRoom).emit('message:receive', systemMsg);
 
-    // Atualiza lista de usuários da sala
     io.to(targetRoom).emit('users:update', chatService.getRoomUsers(targetRoom));
 
     if (callback) callback({ success: true });
@@ -59,12 +55,10 @@ export const registerChatHandlers = (io, socket) => {
 
     if (oldRoom === newRoom) return;
 
-    // Sai da sala anterior no Socket.io e atualiza no serviço
     socket.leave(oldRoom);
     socket.join(newRoom);
     chatService.updateUserRoom(socket.id, newRoom);
 
-    // Notifica saída da sala antiga
     const exitMsg = {
       id: `${Date.now()}-sys`,
       type: 'system',
@@ -73,7 +67,6 @@ export const registerChatHandlers = (io, socket) => {
     socket.to(oldRoom).emit('message:receive', exitMsg);
     io.to(oldRoom).emit('users:update', chatService.getRoomUsers(oldRoom));
 
-    // Notifica entrada na nova sala
     const enterMsg = {
       id: `${Date.now()}-sys`,
       type: 'system',
@@ -82,12 +75,11 @@ export const registerChatHandlers = (io, socket) => {
     socket.to(newRoom).emit('message:receive', enterMsg);
     io.to(newRoom).emit('users:update', chatService.getRoomUsers(newRoom));
 
-    // Envia o histórico da nova sala para quem trocou
     socket.emit('message:history', chatService.getRecentMessages(newRoom));
   });
 
-  // 3. Envio de Mensagem por Sala
-  socket.on('message:send', ({ text, room }) => {
+  // 3. Envio de Mensagem (com suporte a resposta)
+  socket.on('message:send', ({ text, room, replyTo }) => {
     if (isRateLimited(socket.id)) {
       return socket.emit('error', { message: 'Você está enviando mensagens muito rápido.' });
     }
@@ -95,16 +87,37 @@ export const registerChatHandlers = (io, socket) => {
     const user = chatService.getUser(socket.id);
     const targetRoom = room || user?.room || defaultRoom;
 
-    const { message, error } = chatService.addMessage(socket.id, text, targetRoom);
+    const { message, error } = chatService.addMessage(socket.id, text, targetRoom, replyTo);
     if (error) {
       return socket.emit('error', { message: error });
     }
 
-    // Emite apenas para a sala especificada
     io.to(targetRoom).emit('message:receive', message);
   });
 
-  // 4. Indicador de Digitação direcionado à Sala
+  // 4. Edição de Mensagem
+  socket.on('message:edit', ({ messageId, newText }) => {
+    const { message, error } = chatService.editMessage(socket.id, messageId, newText);
+    if (error) {
+      return socket.emit('error', { message: error });
+    }
+
+    io.to(message.room).emit('message:updated', message);
+  });
+
+  // 5. Exclusão de Mensagem
+  socket.on('message:delete', ({ messageId }) => {
+    const { success, room, error } = chatService.deleteMessage(socket.id, messageId);
+    if (error) {
+      return socket.emit('error', { message: error });
+    }
+
+    if (success) {
+      io.to(room).emit('message:deleted', { messageId });
+    }
+  });
+
+  // 6. Indicadores de Digitação
   socket.on('typing:start', ({ room }) => {
     const user = chatService.getUser(socket.id);
     const targetRoom = room || user?.room || defaultRoom;
@@ -121,7 +134,7 @@ export const registerChatHandlers = (io, socket) => {
     }
   });
 
-  // 5. Desconexão
+  // 7. Desconexão
   socket.on('disconnect', () => {
     const user = chatService.removeUser(socket.id);
     rateLimits.delete(socket.id);

@@ -7,6 +7,8 @@ import { MessageInput } from './components/MessageInput';
 
 export default function App() {
   const [joined, setJoined] = useState(false);
+  const [replyTo, setReplyTo] = useState(null); // 🟢 1. Estado para gerenciar a citação/resposta
+
   const {
     socketId,
     isConnected,
@@ -18,6 +20,8 @@ export default function App() {
     joinChat,
     switchRoom,
     sendMessage,
+    editMessage,   // 🟢 2. Importado do hook
+    deleteMessage, // 🟢 2. Importado do hook
     setTyping
   } = useSocket();
 
@@ -52,12 +56,23 @@ export default function App() {
         currentRoom={currentRoom}
         onSwitchRoom={switchRoom}
       />
+
+      {/* 🟢 3. Props passadas corretamente para a lista de mensagens */}
       <MessageList
         messages={messages}
         currentSocketId={socketId}
         typingUsers={typingUsers}
+        onReply={(msg) => setReplyTo(msg)}
+        onEdit={editMessage}
+        onDelete={deleteMessage}
       />
-      <MessageInput onSendMessage={sendMessage} onTyping={setTyping} />
+
+      <MessageInput
+        onSendMessage={sendMessage}
+        onTyping={setTyping}
+        replyTo={replyTo}
+        onCancelReply={() => setReplyTo(null)}
+      />
     </div>
   );
 }
