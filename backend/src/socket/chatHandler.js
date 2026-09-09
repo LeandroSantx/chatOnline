@@ -19,65 +19,109 @@ const isRateLimited = (socketId) => {
 };
 
 export const registerChatHandlers = (io, socket) => {
-  const defaultRoom = 'resenha';
+  const defaultRoom = 'Geral';
 
-  // Entrada na sala
-  socket.on('user:join', ({ username }, callback) => {
-    const { user, error } = chatService.addUser(socket.id, username, defaultRoom);
+  // 1. Entrada Inicial do Usuário
+  socket.on('user:join', ({ username, room }, callback) => {
+    const targetRoom = room || defaultRoom;
+    const { user, error } = chatService.addUser(socket.id, username, targetRoom);
 
     if (error) {
       return callback && callback({ success: false, error });
     }
 
-    socket.join(defaultRoom);
+    socket.join(targetRoom);
 
-    // Envia histórico atual para o novo usuário
-    socket.emit('message:history', chatService.getRecentMessages());
+    // Envia histórico da sala atual
+    socket.emit('message:history', chatService.getRecentMessages(targetRoom));
 
     // Notifica outros usuários da sala
     const systemMsg = {
       id: `${Date.now()}-sys`,
       type: 'system',
-      text: `${user.username} entrou no chat.`
+      text: `${user.username} entrou na sala ${targetRoom}.`
     };
-    socket.to(defaultRoom).emit('message:receive', systemMsg);
+    socket.to(targetRoom).emit('message:receive', systemMsg);
 
-    // Atualiza lista global de usuários da sala
-    io.to(defaultRoom).emit('users:update', chatService.getRoomUsers(defaultRoom));
+    // Atualiza lista de usuários da sala
+    io.to(targetRoom).emit('users:update', chatService.getRoomUsers(targetRoom));
 
     if (callback) callback({ success: true });
   });
 
-  // Envio de mensagem
-  socket.on('message:send', ({ text }) => {
+  // 2. Troca de Sala Privada / Canal
+  socket.on('room:join', ({ room }) => {
+    const user = chatService.getUser(socket.id);
+    if (!user || !room) return;
+
+    const oldRoom = user.room;
+    const newRoom = room.trim();
+
+    if (oldRoom === newRoom) return;
+
+    // Sai da sala anterior no Socket.io e atualiza no serviço
+    socket.leave(oldRoom);
+    socket.join(newRoom);
+    chatService.updateUserRoom(socket.id, newRoom);
+
+    // Notifica saída da sala antiga
+    const exitMsg = {
+      id: `${Date.now()}-sys`,
+      type: 'system',
+      text: `${user.username} saiu da sala.`
+    };
+    socket.to(oldRoom).emit('message:receive', exitMsg);
+    io.to(oldRoom).emit('users:update', chatService.getRoomUsers(oldRoom));
+
+    // Notifica entrada na nova sala
+    const enterMsg = {
+      id: `${Date.now()}-sys`,
+      type: 'system',
+      text: `${user.username} entrou na sala.`
+    };
+    socket.to(newRoom).emit('message:receive', enterMsg);
+    io.to(newRoom).emit('users:update', chatService.getRoomUsers(newRoom));
+
+    // Envia o histórico da nova sala para quem trocou
+    socket.emit('message:history', chatService.getRecentMessages(newRoom));
+  });
+
+  // 3. Envio de Mensagem por Sala
+  socket.on('message:send', ({ text, room }) => {
     if (isRateLimited(socket.id)) {
       return socket.emit('error', { message: 'Você está enviando mensagens muito rápido.' });
     }
 
-    const { message, error } = chatService.addMessage(socket.id, text, defaultRoom);
+    const user = chatService.getUser(socket.id);
+    const targetRoom = room || user?.room || defaultRoom;
+
+    const { message, error } = chatService.addMessage(socket.id, text, targetRoom);
     if (error) {
       return socket.emit('error', { message: error });
     }
 
-    io.to(defaultRoom).emit('message:receive', message);
+    // Emite apenas para a sala especificada
+    io.to(targetRoom).emit('message:receive', message);
   });
 
-  // Evento opcional: Indicador de digitação
-  socket.on('typing:start', () => {
+  // 4. Indicador de Digitação direcionado à Sala
+  socket.on('typing:start', ({ room }) => {
     const user = chatService.getUser(socket.id);
+    const targetRoom = room || user?.room || defaultRoom;
     if (user) {
-      socket.to(defaultRoom).emit('typing:update', { username: user.username, isTyping: true });
+      socket.to(targetRoom).emit('typing:update', { username: user.username, isTyping: true });
     }
   });
 
-  socket.on('typing:stop', () => {
+  socket.on('typing:stop', ({ room }) => {
     const user = chatService.getUser(socket.id);
+    const targetRoom = room || user?.room || defaultRoom;
     if (user) {
-      socket.to(defaultRoom).emit('typing:update', { username: user.username, isTyping: false });
+      socket.to(targetRoom).emit('typing:update', { username: user.username, isTyping: false });
     }
   });
 
-  // Desconexão
+  // 5. Desconexão
   socket.on('disconnect', () => {
     const user = chatService.removeUser(socket.id);
     rateLimits.delete(socket.id);
@@ -88,8 +132,8 @@ export const registerChatHandlers = (io, socket) => {
         type: 'system',
         text: `${user.username} saiu do chat.`
       };
-      io.to(defaultRoom).emit('message:receive', systemMsg);
-      io.to(defaultRoom).emit('users:update', chatService.getRoomUsers(defaultRoom));
+      io.to(user.room).emit('message:receive', systemMsg);
+      io.to(user.room).emit('users:update', chatService.getRoomUsers(user.room));
     }
   });
 };

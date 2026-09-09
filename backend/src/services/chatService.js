@@ -2,14 +2,12 @@ import { sanitizeInput } from '../utils/sanitize.js';
 
 class ChatService {
   constructor() {
-    // Abstração de armazenamento em memória.
-    // Para migrar para PostgreSQL/MongoDB no futuro, basta alterar estes métodos.
     this.users = new Map(); // socket.id -> { id, username, room }
     this.messages = [];     // Array de mensagens em memória
     this.MAX_MESSAGES = 100;
   }
 
-  addUser(socketId, username, room = 'resenha') {
+  addUser(socketId, username, room = 'Geral') {
     const cleanUsername = sanitizeInput(username);
     
     if (!cleanUsername || cleanUsername.length > 20) {
@@ -19,6 +17,16 @@ class ChatService {
     const user = { id: socketId, username: cleanUsername, room };
     this.users.set(socketId, user);
     return { user };
+  }
+
+  // Novo método para atualizar a sala do usuário no Map
+  updateUserRoom(socketId, newRoom) {
+    const user = this.users.get(socketId);
+    if (user) {
+      user.room = newRoom;
+      this.users.set(socketId, user);
+    }
+    return user;
   }
 
   removeUser(socketId) {
@@ -33,11 +41,11 @@ class ChatService {
     return this.users.get(socketId);
   }
 
-  getRoomUsers(room = 'resenha') {
+  getRoomUsers(room = 'Geral') {
     return Array.from(this.users.values()).filter(u => u.room === room);
   }
 
-  addMessage(socketId, text, room = 'resenha') {
+  addMessage(socketId, text, room = 'Geral') {
     const user = this.getUser(socketId);
     if (!user) return { error: 'Usuário não registrado.' };
 
@@ -52,6 +60,7 @@ class ChatService {
       username: user.username,
       userId: user.id,
       text: cleanText,
+      room: room, // Vincula a mensagem à sala específica
       timestamp: new Date().toISOString()
     };
 
@@ -63,8 +72,9 @@ class ChatService {
     return { message };
   }
 
-  getRecentMessages() {
-    return this.messages;
+  // Retorna apenas o histórico pertencente à sala solicitada
+  getRecentMessages(room = 'Geral') {
+    return this.messages.filter(msg => msg.room === room);
   }
 }
 

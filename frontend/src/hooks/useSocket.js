@@ -10,6 +10,7 @@ export const useSocket = () => {
   const [users, setUsers] = useState([]);
   const [typingUsers, setTypingUsers] = useState(new Set());
   const [error, setError] = useState(null);
+  const [currentRoom, setCurrentRoom] = useState('Geral');
 
   useEffect(() => {
     socketRef.current = io(SOCKET_URL, {
@@ -51,19 +52,27 @@ export const useSocket = () => {
 
   const joinChat = (username, callback) => {
     if (socketRef.current) {
-      socketRef.current.emit('user:join', { username }, callback);
+      socketRef.current.emit('user:join', { username, room: currentRoom }, callback);
+    }
+  };
+
+  const switchRoom = (newRoom) => {
+    if (socketRef.current && isConnected && newRoom.trim()) {
+      socketRef.current.emit('room:join', { room: newRoom });
+      setCurrentRoom(newRoom);
+      setMessages([]); // Limpa as mensagens da sala anterior
     }
   };
 
   const sendMessage = (text) => {
     if (socketRef.current && isConnected) {
-      socketRef.current.emit('message:send', { text });
+      socketRef.current.emit('message:send', { text, room: currentRoom });
     }
   };
 
   const setTyping = (isTyping) => {
     if (socketRef.current && isConnected) {
-      socketRef.current.emit(isTyping ? 'typing:start' : 'typing:stop');
+      socketRef.current.emit(isTyping ? 'typing:start' : 'typing:stop', { room: currentRoom });
     }
   };
 
@@ -74,7 +83,9 @@ export const useSocket = () => {
     users,
     typingUsers: Array.from(typingUsers),
     error,
+    currentRoom,
     joinChat,
+    switchRoom,
     sendMessage,
     setTyping
   };

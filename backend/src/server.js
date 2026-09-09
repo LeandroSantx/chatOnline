@@ -16,7 +16,6 @@ const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
 app.use(cors({ origin: CLIENT_ORIGIN }));
 app.use(express.json());
 
-// Health check para monitoramento
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 const io = new Server(httpServer, {

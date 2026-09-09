@@ -14,7 +14,9 @@ export default function App() {
     users,
     typingUsers,
     error,
+    currentRoom,
     joinChat,
+    switchRoom,
     sendMessage,
     setTyping
   } = useSocket();
@@ -44,7 +46,12 @@ export default function App() {
           Conexão perdida. Reconectando ao servidor...
         </div>
       )}
-      <ChatHeader users={users} isConnected={isConnected} />
+      <ChatHeader
+        users={users}
+        isConnected={isConnected}
+        currentRoom={currentRoom}
+        onSwitchRoom={switchRoom}
+      />
       <MessageList
         messages={messages}
         currentSocketId={socketId}
