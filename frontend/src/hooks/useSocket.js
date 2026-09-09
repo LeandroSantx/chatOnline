@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { io } from 'socket.io-client'
 
-const SOCKET_URL = 'http://localhost:3001'
+// Lê a URL do backend de produção ou usa localhost no ambiente de desenvolvimento
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001'
 
 export const socket = io(SOCKET_URL, {
   transports: ['websocket', 'polling'],
