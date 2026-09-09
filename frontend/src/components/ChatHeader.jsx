@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react'
+import { supabase } from '../supabaseClient'
 
-// Função para gerar ID único numérico de 6 dígitos
 const generateNumericRoomId = () => {
   return Math.floor(100000 + Math.random() * 900000).toString()
 }
 
-// Obtém ou cria uma chave única no navegador para manter a lista salva
 const getStorageKey = () => {
   let key = localStorage.getItem('resenha_user_session_id')
   if (!key) {
@@ -21,7 +20,13 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
   const [newRoomName, setNewRoomName] = useState('')
   const [showCreateModal, setShowCreateModal] = useState(false)
 
-  // Carrega as salas salvas no localStorage
+  // Estados de Amizade
+  const [friendSearch, setFriendSearch] = useState('')
+  const [pendingRequests, setPendingRequests] = useState([])
+  const [acceptedFriends, setAcceptedFriends] = useState([])
+  const [friendStatusMsg, setFriendStatusMsg] = useState('')
+  const [myUserId, setMyUserId] = useState('')
+
   const [roomsList, setRoomsList] = useState(() => {
     const storageKey = getStorageKey()
     const saved = localStorage.getItem(storageKey)
@@ -35,11 +40,116 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
     return [{ id: '100000', name: 'Geral' }]
   })
 
-  // Salva no localStorage a cada atualização das salas
   useEffect(() => {
     const storageKey = getStorageKey()
     localStorage.setItem(storageKey, JSON.stringify(roomsList))
   }, [roomsList])
+
+  useEffect(() => {
+    if (isMenuOpen) {
+      loadFriendshipsData()
+    }
+  }, [isMenuOpen])
+
+  const loadFriendshipsData = async () => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+    setMyUserId(user.id)
+
+    // Busca amizades do usuário
+    const { data: friendships } = await supabase
+      .from('friendships')
+      .select('id, status, user_id, friend_id')
+      .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`)
+
+    if (!friendships) return
+
+    // Separa os pendentes recebidos
+    const pendingList = []
+    const acceptedList = []
+
+    for (const f of friendships) {
+      const otherId = f.user_id === user.id ? f.friend_id : f.user_id
+      
+      // Busca o perfil da outra pessoa
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('username')
+        .eq('id', otherId)
+        .maybeSingle()
+
+      const friendObj = {
+        friendshipId: f.id,
+        userId: otherId,
+        username: profile?.username || 'Usuário'
+      }
+
+      if (f.status === 'pending') {
+        // Apenas exibe na pendência se a solicitação foi enviada PARA MIM
+        if (f.friend_id === user.id) {
+          pendingList.push(friendObj)
+        }
+      } else if (f.status === 'accepted') {
+        acceptedList.push(friendObj)
+      }
+    }
+
+    setPendingRequests(pendingList)
+    setAcceptedFriends(acceptedList)
+  }
+
+  const handleAddFriend = async (e) => {
+    e.preventDefault()
+    const query = friendSearch.trim()
+    if (!query) return
+
+    setFriendStatusMsg('Buscando...')
+    const { data: { user } } = await supabase.auth.getUser()
+
+    // Permite buscar por Username OU por ID (UUID)
+    const { data: targetUser } = await supabase
+      .from('profiles')
+      .select('id, username')
+      .or(`username.eq.${query},id.eq.${query}`)
+      .maybeSingle()
+
+    if (!targetUser) {
+      setFriendStatusMsg('Usuário não encontrado.')
+      return
+    }
+
+    if (targetUser.id === user.id) {
+      setFriendStatusMsg('Você não pode adicionar a si mesmo.')
+      return
+    }
+
+    const { error: insertError } = await supabase
+      .from('friendships')
+      .insert([{ user_id: user.id, friend_id: targetUser.id, status: 'pending' }])
+
+    if (insertError) {
+      setFriendStatusMsg('Solicitação já existente.')
+    } else {
+      setFriendStatusMsg('Pedido enviado!')
+      setFriendSearch('')
+      loadFriendshipsData()
+    }
+  }
+
+  const handleRespondRequest = async (friendshipId, accept) => {
+    if (accept) {
+      await supabase
+        .from('friendships')
+        .update({ status: 'accepted' })
+        .eq('id', friendshipId)
+    } else {
+      await supabase
+        .from('friendships')
+        .delete()
+        .eq('id', friendshipId)
+    }
+    loadFriendshipsData()
+  }
 
   const handleJoinRoom = (e) => {
     e?.preventDefault()
@@ -68,7 +178,6 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
     setIsMenuOpen(false)
   }
 
-  // Deleta a sala no backend (porta 3001) e atualiza a interface local
   const handleRemoveRoom = async (e, roomId) => {
     e.stopPropagation()
 
@@ -77,23 +186,14 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
     }
 
     try {
-      // Chamada ajustada para a porta 3001
-      const response = await fetch(`http://localhost:3001/api/rooms/${roomId}`, {
+      await fetch(`http://localhost:3001/api/rooms/${roomId}`, {
         method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
       })
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        console.warn('Backend retornou erro ao deletar:', errorData.error)
-      }
     } catch (error) {
-      console.warn('Backend inacessível ou offline. Deletando apenas localmente:', error)
+      console.warn('Backend offline. Deletando apenas localmente:', error)
     }
 
-    // Atualiza a interface e a memória local do navegador
     const updatedList = roomsList.filter(r => r.id !== roomId)
     setRoomsList(updatedList)
 
@@ -118,13 +218,7 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
         <button 
           className="menu-toggle" 
           onClick={() => setIsMenuOpen(!isMenuOpen)}
-          style={{
-            background: 'none',
-            border: 'none',
-            color: '#fff',
-            fontSize: '1.5rem',
-            cursor: 'pointer'
-          }}
+          style={{ background: 'none', border: 'none', color: '#fff', fontSize: '1.5rem', cursor: 'pointer' }}
         >
           ☰
         </button>
@@ -157,9 +251,10 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
           display: 'flex',
           flexDirection: 'column',
           boxShadow: '4px 0 10px rgba(0,0,0,0.5)',
-          color: '#fff'
+          color: '#fff',
+          overflowY: 'auto'
         }}>
-          <div className="drawer-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+          <div className="drawer-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
             <h3 style={{ margin: 0 }}>Navegação</h3>
             <button 
               className="close-btn" 
@@ -170,9 +265,42 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
             </button>
           </div>
 
-          <div className="drawer-section" style={{ marginBottom: '20px' }}>
+          {/* Meu ID */}
+          {myUserId && (
+            <div style={{ backgroundColor: '#111827', padding: '8px 10px', borderRadius: '6px', marginBottom: '15px', fontSize: '0.75rem', color: '#9ca3af' }}>
+              Seu ID: <span style={{ color: '#818cf8', fontWeight: 'bold' }}>{myUserId.substring(0, 8)}...</span>
+              <button 
+                onClick={() => navigator.clipboard.writeText(myUserId)} 
+                style={{ marginLeft: '6px', background: 'none', border: 'none', color: '#cbd5e1', cursor: 'pointer', fontSize: '0.7rem' }}
+                title="Copiar ID Completo"
+              >
+                📋 Copiar
+              </button>
+            </div>
+          )}
+
+          {/* Solicitações Pendentes */}
+          {pendingRequests.length > 0 && (
+            <div className="drawer-section" style={{ marginBottom: '15px', backgroundColor: '#312e81', padding: '10px', borderRadius: '8px' }}>
+              <h4 style={{ fontSize: '0.8rem', color: '#a5b4fc', margin: '0 0 8px 0' }}>SOLICITAÇÕES DE AMIZADE ({pendingRequests.length})</h4>
+              <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                {pendingRequests.map((p) => (
+                  <li key={p.friendshipId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', fontSize: '0.85rem' }}>
+                    <span>{p.username}</span>
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      <button onClick={() => handleRespondRequest(p.friendshipId, true)} style={{ background: '#22c55e', color: '#fff', border: 'none', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer' }}>✓</button>
+                      <button onClick={() => handleRespondRequest(p.friendshipId, false)} style={{ background: '#ef4444', color: '#fff', border: 'none', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer' }}>✕</button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Minhas Salas */}
+          <div className="drawer-section" style={{ marginBottom: '15px' }}>
             <h4 style={{ fontSize: '0.8rem', color: '#9ca3af', marginBottom: '8px' }}>MINHAS SALAS</h4>
-            <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 10px 0', maxHeight: '140px', overflowY: 'auto' }}>
+            <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 10px 0', maxHeight: '120px', overflowY: 'auto' }}>
               {roomsList.map((r, index) => (
                 <li key={r.id} style={{ marginBottom: '4px' }}>
                   <div
@@ -242,8 +370,48 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
             </button>
           </div>
 
-          <div className="drawer-section" style={{ marginBottom: '20px' }}>
-            <h4 style={{ fontSize: '0.8rem', color: '#9ca3af', marginBottom: '8px' }}>ENTRAR POR ID (6 DÍGITOS)</h4>
+          {/* Adicionar Amigos */}
+          <div className="drawer-section" style={{ marginBottom: '15px' }}>
+            <h4 style={{ fontSize: '0.8rem', color: '#9ca3af', marginBottom: '8px' }}>ADICIONAR AMIGO (NOME OU ID)</h4>
+            <form onSubmit={handleAddFriend} style={{ display: 'flex', gap: '5px' }}>
+              <input
+                type="text"
+                placeholder="Nome ou ID"
+                value={friendSearch}
+                onChange={(e) => setFriendSearch(e.target.value)}
+                style={{ flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid #374151', backgroundColor: '#111827', color: '#fff', fontSize: '0.85rem' }}
+              />
+              <button 
+                type="submit"
+                style={{ padding: '8px 12px', backgroundColor: '#22c55e', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }}
+              >
+                +
+              </button>
+            </form>
+            {friendStatusMsg && (
+              <span style={{ fontSize: '0.75rem', color: '#818cf8', display: 'block', marginTop: '4px' }}>
+                {friendStatusMsg}
+              </span>
+            )}
+          </div>
+
+          {/* Lista de Amigos Aceitos */}
+          {acceptedFriends.length > 0 && (
+            <div className="drawer-section" style={{ marginBottom: '15px' }}>
+              <h4 style={{ fontSize: '0.8rem', color: '#9ca3af', marginBottom: '8px' }}>MEUS AMIGOS ({acceptedFriends.length})</h4>
+              <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                {acceptedFriends.map((f) => (
+                  <li key={f.userId} style={{ padding: '4px 0', fontSize: '0.85rem', color: '#cbd5e1' }}>
+                    👤 {f.username}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Entrar por ID */}
+          <div className="drawer-section" style={{ marginBottom: '15px' }}>
+            <h4 style={{ fontSize: '0.8rem', color: '#9ca3af', marginBottom: '8px' }}>ENTRAR POR ID</h4>
             <form onSubmit={handleJoinRoom} style={{ display: 'flex', gap: '5px' }}>
               <input
                 type="text"
@@ -261,7 +429,8 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
             </form>
           </div>
 
-          <div className="drawer-section" style={{ flex: 1, overflowY: 'auto' }}>
+          {/* Usuários Online na Sala */}
+          <div className="drawer-section" style={{ flex: 1, minHeight: '80px' }}>
             <h4 style={{ fontSize: '0.8rem', color: '#9ca3af', marginBottom: '8px' }}>ONLINE NESTA SALA ({users.length})</h4>
             <ul className="user-list" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
               {users.map((u, i) => (
