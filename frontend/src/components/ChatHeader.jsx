@@ -6,15 +6,6 @@ const generateNumericRoomId = () => {
   return Math.floor(100000 + Math.random() * 900000).toString()
 }
 
-const getStorageKey = () => {
-  let key = localStorage.getItem('resenha_user_session_id')
-  if (!key) {
-    key = `user_${Math.random().toString(36).substring(2, 9)}`
-    localStorage.setItem('resenha_user_session_id', key)
-  }
-  return `user_rooms_${key}`
-}
-
 export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLogout }) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [roomInput, setRoomInput] = useState('')
@@ -29,30 +20,45 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
   const [friendStatusMsg, setFriendStatusMsg] = useState('')
   const [myUserId, setMyUserId] = useState('')
 
-  const [roomsList, setRoomsList] = useState(() => {
-    const storageKey = getStorageKey()
-    const saved = localStorage.getItem(storageKey)
-    if (saved) {
-      try {
-        return JSON.parse(saved)
-      } catch (e) {
-        localStorage.removeItem(storageKey)
-      }
-    }
-    return [{ id: '100000', name: 'Geral' }]
-  })
-
-  useEffect(() => {
-    const storageKey = getStorageKey()
-    localStorage.setItem(storageKey, JSON.stringify(roomsList))
-  }, [roomsList])
+  // Lista de salas vindas do Supabase
+  const [roomsList, setRoomsList] = useState([{ id: '100000', name: 'Geral' }])
 
   useEffect(() => {
     if (isMenuOpen) {
       loadFriendshipsData()
+      loadUserRooms()
     }
   }, [isMenuOpen])
 
+  // Busca as salas do usuário no Supabase
+  const loadUserRooms = async () => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    const { data: userMemberships } = await supabase
+      .from('room_members')
+      .select('room_id, rooms(id, name)')
+      .eq('user_id', user.id)
+
+    const defaultRoom = { id: '100000', name: 'Geral' }
+
+    if (!userMemberships || userMemberships.length === 0) {
+      setRoomsList([defaultRoom])
+      return
+    }
+
+    const fetchedRooms = userMemberships
+      .map(m => m.rooms)
+      .filter(Boolean)
+
+    if (!fetchedRooms.some(r => r.id === '100000')) {
+      fetchedRooms.unshift(defaultRoom)
+    }
+
+    setRoomsList(fetchedRooms)
+  }
+
+  // Carrega lista de amigos e solicitações
   const loadFriendshipsData = async () => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
@@ -96,19 +102,36 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
     setAcceptedFriends(acceptedList)
   }
 
+  // Adicionar amigo com verificação estrita de username/ID
   const handleAddFriend = async (e) => {
     e.preventDefault()
-    const query = friendSearch.trim()
+    let query = friendSearch.trim()
     if (!query) return
+
+    if (query.startsWith('@')) {
+      query = query.substring(1)
+    }
 
     setFriendStatusMsg('Buscando...')
     const { data: { user } } = await supabase.auth.getUser()
 
-    const { data: targetUser } = await supabase
+    // 1. Busca estrita por username
+    let { data: targetUser } = await supabase
       .from('profiles')
       .select('id, username')
-      .or(`username.eq.${query},id.eq.${query}`)
+      .eq('username', query)
       .maybeSingle()
+
+    // 2. Se não achou, busca por ID UUID
+    if (!targetUser) {
+      const { data: userById } = await supabase
+        .from('profiles')
+        .select('id, username')
+        .eq('id', query)
+        .maybeSingle()
+
+      targetUser = userById
+    }
 
     if (!targetUser) {
       setFriendStatusMsg('Usuário não encontrado.')
@@ -127,7 +150,7 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
     if (insertError) {
       setFriendStatusMsg('Solicitação já existente.')
     } else {
-      setFriendStatusMsg('Pedido enviado!')
+      setFriendStatusMsg(`Pedido enviado para ${targetUser.username}!`)
       setFriendSearch('')
       loadFriendshipsData()
     }
@@ -148,59 +171,59 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
     loadFriendshipsData()
   }
 
-  // ENTRAR NA SALA BUSCANDO O NOME NO SUPABASE
+  // Entrar por ID e salvar o vínculo no Supabase
   const handleJoinRoom = async (e) => {
     e?.preventDefault()
     const targetId = roomInput.trim()
     if (!targetId) return
 
-    // Consulta no Supabase pelo ID da sala
+    const { data: { user } } = await supabase.auth.getUser()
+
     const { data: roomData } = await supabase
       .from('rooms')
       .select('id, name')
       .eq('id', targetId)
       .maybeSingle()
 
-    const roomName = roomData ? roomData.name : `Sala ${targetId}`
+    if (roomData && user) {
+      await supabase
+        .from('room_members')
+        .upsert([{ user_id: user.id, room_id: targetId }])
+    }
 
-    setRoomsList(prev => {
-      if (!prev.some(r => r.id === targetId)) {
-        return [...prev, { id: targetId, name: roomName }]
-      }
-      return prev
-    })
-
+    await loadUserRooms()
     onSwitchRoom(targetId)
     setRoomInput('')
     setIsMenuOpen(false)
   }
 
-  // CRIAR NOVA SALA SALVANDO NO SUPABASE
+  // Criar nova sala e vincular ao usuário no Supabase
   const handleCreatePrivateRoom = async (e) => {
     e.preventDefault()
     if (!newRoomName.trim()) return
 
+    const { data: { user } } = await supabase.auth.getUser()
     const roomId = generateNumericRoomId()
     const name = newRoomName.trim()
 
-    // Insere no banco de dados
-    const { error } = await supabase
+    const { error: roomError } = await supabase
       .from('rooms')
       .insert([{ id: roomId, name: name }])
 
-    if (error) {
-      console.error('Erro ao salvar sala no Supabase:', error)
+    if (roomError) {
       setFriendStatusMsg('Erro ao salvar sala no banco.')
       return
     }
 
-    const newRoomObj = { id: roomId, name }
-    setRoomsList(prev => [...prev, newRoomObj])
-    
+    await supabase
+      .from('room_members')
+      .insert([{ user_id: user.id, room_id: roomId }])
+
     if (socket && socket.connected) {
       socket.emit('room:create', { room: roomId, roomName: name })
     }
 
+    await loadUserRooms()
     onSwitchRoom(roomId)
     setNewRoomName('')
     setShowCreateModal(false)
@@ -212,18 +235,24 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
     setRoomToDelete(roomId)
   }
 
+  // Desvincular sala do usuário
   const confirmDeleteRoom = async () => {
     if (!roomToDelete) return
 
-    // Opcional: remove da tabela rooms no Supabase se desejado
-    await supabase.from('rooms').delete().eq('id', roomToDelete)
+    const { data: { user } } = await supabase.auth.getUser()
 
-    const updatedList = roomsList.filter(r => r.id !== roomToDelete)
-    setRoomsList(updatedList)
+    if (user) {
+      await supabase
+        .from('room_members')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('room_id', roomToDelete)
+    }
+
+    await loadUserRooms()
 
     if (currentRoom === roomToDelete) {
-      const fallbackRoom = updatedList[0]?.id || '100000'
-      onSwitchRoom(fallbackRoom)
+      onSwitchRoom('100000')
     }
 
     setRoomToDelete(null)
@@ -298,7 +327,7 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
               <button 
                 onClick={() => {
                   navigator.clipboard.writeText(myUserId)
-                  setFriendStatusMsg('ID copiado com sucesso!')
+                  setFriendStatusMsg('ID copiado!')
                 }} 
                 style={{ marginLeft: '6px', background: 'none', border: 'none', color: '#cbd5e1', cursor: 'pointer', fontSize: '0.7rem' }}
                 title="Copiar ID Completo"
