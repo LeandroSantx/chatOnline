@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
+import { socket } from '../hooks/useSocket'
 
 const generateNumericRoomId = () => {
   return Math.floor(100000 + Math.random() * 900000).toString()
@@ -19,6 +20,7 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
   const [roomInput, setRoomInput] = useState('')
   const [newRoomName, setNewRoomName] = useState('')
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [roomToDelete, setRoomToDelete] = useState(null)
 
   // Estados de Amizade
   const [friendSearch, setFriendSearch] = useState('')
@@ -34,7 +36,7 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
       try {
         return JSON.parse(saved)
       } catch (e) {
-        console.error('Erro ao ler salas do localStorage', e)
+        localStorage.removeItem(storageKey)
       }
     }
     return [{ id: '100000', name: 'Geral' }]
@@ -56,7 +58,6 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
     if (!user) return
     setMyUserId(user.id)
 
-    // Busca amizades do usuário
     const { data: friendships } = await supabase
       .from('friendships')
       .select('id, status, user_id, friend_id')
@@ -64,14 +65,12 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
 
     if (!friendships) return
 
-    // Separa os pendentes recebidos
     const pendingList = []
     const acceptedList = []
 
     for (const f of friendships) {
       const otherId = f.user_id === user.id ? f.friend_id : f.user_id
       
-      // Busca o perfil da outra pessoa
       const { data: profile } = await supabase
         .from('profiles')
         .select('username')
@@ -85,7 +84,6 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
       }
 
       if (f.status === 'pending') {
-        // Apenas exibe na pendência se a solicitação foi enviada PARA MIM
         if (f.friend_id === user.id) {
           pendingList.push(friendObj)
         }
@@ -106,7 +104,6 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
     setFriendStatusMsg('Buscando...')
     const { data: { user } } = await supabase.auth.getUser()
 
-    // Permite buscar por Username OU por ID (UUID)
     const { data: targetUser } = await supabase
       .from('profiles')
       .select('id, username')
@@ -151,56 +148,85 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
     loadFriendshipsData()
   }
 
-  const handleJoinRoom = (e) => {
+  // ENTRAR NA SALA BUSCANDO O NOME NO SUPABASE
+  const handleJoinRoom = async (e) => {
     e?.preventDefault()
     const targetId = roomInput.trim()
-    if (targetId) {
-      if (!roomsList.some(r => r.id === targetId)) {
-        setRoomsList(prev => [...prev, { id: targetId, name: `Sala ${targetId}` }])
+    if (!targetId) return
+
+    // Consulta no Supabase pelo ID da sala
+    const { data: roomData } = await supabase
+      .from('rooms')
+      .select('id, name')
+      .eq('id', targetId)
+      .maybeSingle()
+
+    const roomName = roomData ? roomData.name : `Sala ${targetId}`
+
+    setRoomsList(prev => {
+      if (!prev.some(r => r.id === targetId)) {
+        return [...prev, { id: targetId, name: roomName }]
       }
-      onSwitchRoom(targetId)
-      setRoomInput('')
-      setIsMenuOpen(false)
-    }
+      return prev
+    })
+
+    onSwitchRoom(targetId)
+    setRoomInput('')
+    setIsMenuOpen(false)
   }
 
-  const handleCreatePrivateRoom = (e) => {
+  // CRIAR NOVA SALA SALVANDO NO SUPABASE
+  const handleCreatePrivateRoom = async (e) => {
     e.preventDefault()
     if (!newRoomName.trim()) return
 
     const roomId = generateNumericRoomId()
-    const newRoomObj = { id: roomId, name: newRoomName.trim() }
+    const name = newRoomName.trim()
 
+    // Insere no banco de dados
+    const { error } = await supabase
+      .from('rooms')
+      .insert([{ id: roomId, name: name }])
+
+    if (error) {
+      console.error('Erro ao salvar sala no Supabase:', error)
+      setFriendStatusMsg('Erro ao salvar sala no banco.')
+      return
+    }
+
+    const newRoomObj = { id: roomId, name }
     setRoomsList(prev => [...prev, newRoomObj])
+    
+    if (socket && socket.connected) {
+      socket.emit('room:create', { room: roomId, roomName: name })
+    }
+
     onSwitchRoom(roomId)
     setNewRoomName('')
     setShowCreateModal(false)
     setIsMenuOpen(false)
   }
 
-  const handleRemoveRoom = async (e, roomId) => {
+  const handleRemoveRoom = (e, roomId) => {
     e.stopPropagation()
+    setRoomToDelete(roomId)
+  }
 
-    if (!window.confirm('Tem certeza de que deseja apagar esta sala definitivamente?')) {
-      return
-    }
+  const confirmDeleteRoom = async () => {
+    if (!roomToDelete) return
 
-    try {
-      await fetch(`http://localhost:3001/api/rooms/${roomId}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-      })
-    } catch (error) {
-      console.warn('Backend offline. Deletando apenas localmente:', error)
-    }
+    // Opcional: remove da tabela rooms no Supabase se desejado
+    await supabase.from('rooms').delete().eq('id', roomToDelete)
 
-    const updatedList = roomsList.filter(r => r.id !== roomId)
+    const updatedList = roomsList.filter(r => r.id !== roomToDelete)
     setRoomsList(updatedList)
 
-    if (currentRoom === roomId) {
+    if (currentRoom === roomToDelete) {
       const fallbackRoom = updatedList[0]?.id || '100000'
       onSwitchRoom(fallbackRoom)
     }
+
+    setRoomToDelete(null)
   }
 
   const currentRoomObj = roomsList.find(r => r.id === currentRoom) || { id: currentRoom, name: currentRoom }
@@ -270,7 +296,10 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
             <div style={{ backgroundColor: '#111827', padding: '8px 10px', borderRadius: '6px', marginBottom: '15px', fontSize: '0.75rem', color: '#9ca3af' }}>
               Seu ID: <span style={{ color: '#818cf8', fontWeight: 'bold' }}>{myUserId.substring(0, 8)}...</span>
               <button 
-                onClick={() => navigator.clipboard.writeText(myUserId)} 
+                onClick={() => {
+                  navigator.clipboard.writeText(myUserId)
+                  setFriendStatusMsg('ID copiado com sucesso!')
+                }} 
                 style={{ marginLeft: '6px', background: 'none', border: 'none', color: '#cbd5e1', cursor: 'pointer', fontSize: '0.7rem' }}
                 title="Copiar ID Completo"
               >
@@ -461,6 +490,7 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
         </aside>
       )}
 
+      {/* Modal: Criar Nova Sala */}
       {showCreateModal && (
         <div style={{
           position: 'fixed',
@@ -536,6 +566,66 @@ export const ChatHeader = ({ currentRoom, users, isConnected, onSwitchRoom, onLo
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Confirmar Exclusão de Sala */}
+      {roomToDelete && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 2000
+        }}>
+          <div style={{
+            backgroundColor: '#1e293b',
+            padding: '20px',
+            borderRadius: '12px',
+            width: '90%',
+            maxWidth: '380px',
+            boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
+            color: '#fff'
+          }}>
+            <h3 style={{ marginTop: 0, marginBottom: '10px', fontSize: '1.1rem', color: '#f87171' }}>Apagar Sala</h3>
+            <p style={{ fontSize: '0.85rem', color: '#94a3b8', marginBottom: '20px' }}>
+              Tem certeza de que deseja apagar esta sala definitivamente?
+            </p>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setRoomToDelete(null)}
+                style={{
+                  padding: '8px 14px',
+                  backgroundColor: '#475569',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer'
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmDeleteRoom}
+                style={{
+                  padding: '8px 14px',
+                  backgroundColor: '#ef4444',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontWeight: 'bold'
+                }}
+              >
+                Apagar
+              </button>
+            </div>
           </div>
         </div>
       )}

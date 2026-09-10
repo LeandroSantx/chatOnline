@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { io } from 'socket.io-client'
 
-// Lê a URL do backend de produção ou usa localhost no ambiente de desenvolvimento
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001'
 
 export const socket = io(SOCKET_URL, {
@@ -59,10 +58,10 @@ export function useSocket(currentRoom, username, userId, onRoomInvite) {
       })
     })
 
-    // Ouve o convite/redirecionamento de sala privada em tempo real
-    socket.on('room:invite', ({ room }) => {
+    // Ouve a criação/convite de sala e repassa dados completos (room e roomName)
+    socket.on('room:invite', (data) => {
       if (onRoomInvite) {
-        onRoomInvite(room)
+        onRoomInvite(data)
       }
     })
 
@@ -78,7 +77,6 @@ export function useSocket(currentRoom, username, userId, onRoomInvite) {
     }
   }, [username, userId, currentRoom, onRoomInvite])
 
-  // Troca de sala
   useEffect(() => {
     if (socket.connected && currentRoom) {
       socket.emit('room:join', { room: currentRoom })
